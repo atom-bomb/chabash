@@ -53,6 +53,10 @@ debug() {
   fi
 }
 
+warning() {
+  echo $@ >&2
+}
+
 error_exit() {
   echo $@ >&2
   exit 1
@@ -116,9 +120,14 @@ function add_sentence() {
   local skip
 
   while [ "${sentence}" != "" ]; do
-    last_word=${next_word}
-    next_word=$(expr "${sentence}" : "[ -\&\\(-@\[-\`\{\}\~]*\([\'A-Za-z0-9]*\)")
-    skip_trash=$(expr "${sentence}" : "\([ -\&\\(-@\[-\`\{\}\~]*\)[\'A-Za-z0-9]*")
+    last_word="${next_word}"
+    next_word="$(expr "${sentence}" : "[\|\$ -\&\\(-@\[-\`\{\}\~]*\([\'A-Za-z0-9]*\)")"
+    skip_trash="$(expr "${sentence}" : "\([\|\$ -\&\\(-@\[-\`\{\}\~]*\)[\'A-Za-z0-9]*")"
+
+    debug "Last ${last_word}"
+    debug "Next ${next_word}"
+    debug "Trash ${skip_trash}"
+    debug "Sentence ${sentence}"
 
     case "${skip_trash}" in
        .*)
@@ -138,18 +147,23 @@ function add_sentence() {
         skip=${#skip_trash}
         ;;
       *)
-        next_word=${next_word/\'/_}
+        next_word="${next_word//\'/_}"
         skip=$(( ${#skip_trash} + ${#next_word} ))
         ;;
     esac
 
-    sentence=${sentence:${skip}}
+    sentence="${sentence:${skip}}"
 
     if [ "${next_word}" != "" ]; then
       add_next_word "${last_word}" "${next_word}"
       if [ "${sentence}" == "" ]; then
-        last_word=${next_word}
+        last_word="${next_word}"
       fi
+    fi
+
+    if [ ${skip} -eq 0 ]; then
+      warning "Parse error at ${sentence}"
+      break
     fi
   done
 
@@ -161,7 +175,7 @@ function add_sentences_from_stdin() {
   local line
 
   while read line; do
-    debug ${line} >&2
+    debug "${line}"
     add_sentence "${line}"
   done
 
@@ -187,7 +201,7 @@ function expand_tag() {
       echo "! "
       ;;
     *)
-      echo "${word/_/\'}"
+      echo "${word//_/\'}"
       ;;
   esac
 }
@@ -299,10 +313,10 @@ function rarest_word_in_sentence() {
   local skip_trash
 
   while [ "${sentence}" != "" ]; do
-    next_word=$(expr "${sentence}" : "[ -@\[-\`\{\}\~]*\([A-Za-z0-9]*\)")
-    skip_trash=$(expr "${sentence}" : "\([ -@\[-\`\{\}\~]*\)[A-Za-z0-9]*")
+    next_word="$(expr "${sentence}" : "[\$\| -@\[-\`\{\}\~]*\([A-Za-z0-9]*\)")"
+    skip_trash="$(expr "${sentence}" : "\([\$\| -@\[-\`\{\}\~]*\)[A-Za-z0-9]*")"
     local skip=$(( ${#skip_trash} + ${#next_word} ))
-    sentence=${sentence:${skip}}
+    sentence="${sentence:${skip}}"
     if [ "${next_word}" != "" ]; then
       local total
       eval total=\$${var_prefix}_${next_word}_total
@@ -310,16 +324,16 @@ function rarest_word_in_sentence() {
         total=0
       fi
       if [ "${rarest_word}" = "" ]; then
-        rarest_word=${next_word}
+        rarest_word="${next_word}"
         rarest_word_total=${total}
       elif [ ${rarest_word_total} -lt ${total} ]; then
-        rarest_word=${next_word}
+        rarest_word="${next_word}"
         rarest_word_total=${total}
       fi
     fi
   done
   debug "RARE: ${rarest_word}"
-  echo ${rarest_word}
+  echo "${rarest_word}"
 }
 
 # build a sentence that uses a given word
@@ -426,7 +440,7 @@ fi
 if [ "${read_filename}" != "" ]; then
   # ingest text from read_filename
   if [ -f "${read_filename}" ]; then
-    ${CAT} "${read_filename}" | ${TR} '\r' ' ' | ${TR} '\n' ' ' | \
+    ${CAT} "${read_filename}" | ${TR} -cd '\12\15\40-\176' | ${TR} '\r' ' ' | ${TR} '\n' ' ' | \
       ${SED} -e 's/\. /.\n/g' -e 's/\? /\?\n/g' -e 's/\! /\!\n/g' |
       add_sentences_from_stdin
     exit 0
