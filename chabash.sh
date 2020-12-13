@@ -37,6 +37,8 @@ fi
 data_filename=chabash.dat
 read_filename=
 
+bidirectional=1
+
 var_prefix=CB
 
 begin_tag=__BEGIN__
@@ -108,6 +110,44 @@ function add_next_word() {
     # new next word
     eval ${this_nexts}+=\(${next_word}\)
     eval ${this_counts}+=\(1\)
+  fi
+
+  if [ "${bidirectional}" != "1" ]; then
+    return
+  fi
+
+  # bidirectional case
+  local next_prevs=${var_prefix}_${next_word}_prevs
+  local next_counts=${var_prefix}_${next_word}_prev_counts
+  local next_total=${var_prefix}_${next_word}_prev_total
+  local prev_words
+  eval prev_words=\$\{$next_prevs\[\@\]\}
+
+  local old_total
+  eval old_total=\$${next_total}
+  eval ${next_total}=$(( ${old_total} + 1 ))
+
+  if [[ " ${prev_words} " == *" $this_word "* ]]; then
+    # old prev word, increment the count
+    local num_prev_words
+    eval num_prev_words=\$\{\#$next_prevs\[\@\]\}
+    local i=0
+ 
+    while [ $i -lt ${num_prev_words} ]; do
+      local a_word
+      local a_count
+      eval a_word=\$\{$next_prevs\[$i\]\}
+      if [ "${a_word}" == "${this_word}" ]; then
+        eval a_count=\$\{$next_counts\[$i\]\}
+        eval $next_counts\[$i\]=$(( ${a_count} + 1 ))
+        break
+      fi
+      (( i++ ))
+    done
+  else
+    # new next word
+    eval ${next_prevs}+=\(${prev_word}\)
+    eval ${next_counts}+=\(1\)
   fi
 }
 
@@ -249,33 +289,68 @@ function get_words_from_set_spew() {
   done
 }
 
-# awkwardly search memory to backwards-walk the directed graph
+# get a random word that precedes the given word
 function get_previous_word() {
   local this_word=$1
-  local raw_words_list
-  local words_list
-  local words_count=0
 
-  raw_words_list=$(set | ${GREP} -E "^${var_prefix}_\\w+_nexts.*\=\"${this_word}\"" | get_words_from_set_spew )
+  if [ "${bidirectional}" = "1" ]; then
+    local this_word=$1
 
-  while [ 1 ]; do
-    local a_word=$(expr "$raw_words_list" : "\s*\(\w*\)\s*")
-    local skip=$(expr "$raw_words_list" : "\(\s*\w*\s*\)")
+    local this_prevs=${var_prefix}_${this_word}_prevs
+    local this_counts=${var_prefix}_${this_word}_prev_counts
+    local this_total=${var_prefix}_${this_word}_prev_total
 
-    if [ "${a_word}" == "" ]; then
-      break
+    local total
+    eval total=\$${this_total}
+
+    if [ "${total}" = "" ]; then
+      echo ${begin_tag}
+      return
     fi
 
-    words_list+=(${a_word})
-    words_count=$(( ${words_count} + 1 ))
-    raw_words_list=${raw_words_list:${#skip}}
-  done
-
-  if [ ${words_count} -gt 0 ]; then
-    local word_choice=$(( $RANDOM % ${words_count} ))
-    echo ${words_list[${word_choice}]} 
+    local randy=$(( $RANDOM % ${total} ))
+    local i=0
+    local num_prev_words
+    eval num_prev_words=\$\{\#$this_prevs\[\@\]\}
+    while [ $i -lt ${num_prev_words} ]; do
+      local a_word
+      local a_count
+      eval a_count=\$\{$this_counts\[$i\]\}
+      if [ ${randy} -le ${a_count} ]; then
+        eval a_word=\$\{$this_prevs\[$i\]\}
+        echo ${a_word}
+        break
+      fi
+      randy=$(( ${randy} - ${a_count} ))
+      (( i++ ))
+    done
   else
-    echo ${begin_tag}
+    # awkwardly search memory to backwards-walk the directed graph
+    local raw_words_list
+    local words_list
+    local words_count=0
+
+    raw_words_list=$(set | ${GREP} -E "^${var_prefix}_\\w+_nexts.*\=\"${this_word}\"" | get_words_from_set_spew )
+
+    while [ 1 ]; do
+      local a_word=$(expr "$raw_words_list" : "\s*\(\w*\)\s*")
+      local skip=$(expr "$raw_words_list" : "\(\s*\w*\s*\)")
+
+      if [ "${a_word}" == "" ]; then
+        break
+      fi
+
+      words_list+=(${a_word})
+      words_count=$(( ${words_count} + 1 ))
+      raw_words_list=${raw_words_list:${#skip}}
+    done
+
+    if [ ${words_count} -gt 0 ]; then
+      local word_choice=$(( $RANDOM % ${words_count} ))
+      echo ${words_list[${word_choice}]} 
+    else
+      echo ${begin_tag}
+    fi
   fi
 }
 
@@ -322,13 +397,14 @@ function rarest_word_in_sentence() {
       eval total=\$${var_prefix}_${next_word}_total
       if [ "${total}" == "" ]; then
         total=0
-      fi
-      if [ "${rarest_word}" = "" ]; then
-        rarest_word="${next_word}"
-        rarest_word_total=${total}
-      elif [ ${rarest_word_total} -lt ${total} ]; then
-        rarest_word="${next_word}"
-        rarest_word_total=${total}
+      else
+        if [ "${rarest_word}" = "" ]; then
+          rarest_word="${next_word}"
+          rarest_word_total=${total}
+        elif [ ${rarest_word_total} -gt ${total} ]; then
+          rarest_word="${next_word}"
+          rarest_word_total=${total}
+        fi
       fi
     fi
   done
